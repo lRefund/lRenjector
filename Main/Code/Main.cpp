@@ -1493,7 +1493,7 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[]) {
         case L'1':
             SelectGame();
             break;
-            //case L'2': // Закомментировано
+            //case L'2': // Закомментировано (честно)
             //    ShowInjectionMenu();
             //    break;
         case L'3':
@@ -1511,4 +1511,5 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[]) {
     }
 
     return 0;
+
 }
