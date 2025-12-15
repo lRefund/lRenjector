@@ -1,5 +1,5 @@
 # lRenjector
- - I thought it would be a good idea to share one of my projects with you. Now I want to introduce you to my injector - lRejector.
+ - I thought it would be a good idea to share one of my projects with you. Now I want to introduce you to my injector - lRenjector.
 
 ## Instructions:
 1. Install the contents from git in a way that is convenient for you and open the .sln.
