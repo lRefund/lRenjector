@@ -16,6 +16,7 @@
 #include <vector>
 #include <shellapi.h>
 #include <winhttp.h>
+#include <conio.h>
 #include <chrono>
 #include <random>
 #include <thread>
@@ -45,14 +46,14 @@ struct GameInfo {
 };
 
 vector<GameInfo> games = {
-    {L"Genshin Impact", L"GenshinImpact.exe", L"GI.dll", L"", false, false},
-    {L"Honkai: Star Rail", L"StarRail.exe", L"SR.dll", L"", false, false},
+    {L"Game 1", L"Game.exe", L"Dll.dll", L"", false, false},
+    {L"Game 2", L"Game.exe", L"Dll.dll", L"", false, false},
     {L"Custom Game", L"", L"", L"", true, false}
 };
 
 HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 
-const wstring WEBHOOK_URL = L"Your discord webhook. Example: https://discord.com/api/webhooks/1444345161236346342686753/JCrWglzuAdHoHKWGO1x9e_NHF1pouebkJFvZ1BB-B0PO1lKtrEEFsz83U4tsB2SfhxFN";
+const wstring WEBHOOK_URL = L"https://discord.com/api/webhooks/...";
 
 atomic<bool> g_monitoringEnabled(false);
 thread g_monitorThread;
@@ -352,7 +353,7 @@ void SendStartupWebhook() {
         {L"Process Monitoring", g_settings.enableProcessMonitoring ? L"Enabled" : L"Disabled"}
     };
 
-    SendDiscordWebhook(L"Injector Started", L"lRucifix community Reinjector has been launched", fields);
+    SendDiscordWebhook(L"Injector Started", L"Injector launched", fields);
 }
 
 void SendProcessStartWebhook(DWORD processId, const wstring& processName, const wstring& processPath) {
@@ -588,6 +589,31 @@ wstring GetProcessPath(DWORD processId) {
     return L"Unknown";
 }
 
+wstring GetLastErrorString() {
+    DWORD error = GetLastError();
+    if (error == 0) {
+        return L"No error";
+    }
+
+    LPWSTR buffer = nullptr;
+    DWORD size = FormatMessageW(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL,
+        error,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPWSTR)&buffer,
+        0,
+        NULL);
+
+    if (size == 0 || buffer == nullptr) {
+        return L"Unknown error";
+    }
+
+    wstring message(buffer);
+    LocalFree(buffer);
+    return message;
+}
+
 void MonitorGenshinProcess() {
     bool wasRunning = false;
     chrono::system_clock::time_point startTime;
@@ -809,115 +835,40 @@ void SaveGamePaths() {
     UpdateGameConfigurationStatus();
 }
 
-/*
-bool IsCorrectTargetArchitecture(HANDLE hProc) {
-    BOOL bTarget = FALSE;
-    if (!IsWow64Process(hProc, &bTarget)) {
-        return false;
+void ShowInjectionProgress(int gameIndex) {
+    if (gameIndex < 0 || gameIndex >= (int)games.size()) return;
+
+    ClearScreen();
+    PrintCentered(L"INJECTION (LoadLibrary)", 2);
+
+    if (!games[gameIndex].isConfigured) {
+        PrintStatus(L"Game is not configured!", false);
+        PrintLeft(L"Please configure the game before injecting.", 5);
+        PrintLeft(L"Press any key to continue...", 7);
+        _getwch();
+        return;
     }
-
-    BOOL bHost = FALSE;
-    IsWow64Process(GetCurrentProcess(), &bHost);
-
-    return (bTarget == bHost);
-}
-
-HANDLE CreateSuspendedProcess(const wstring& exePath) {
-    STARTUPINFO si = { sizeof(si) };
-    PROCESS_INFORMATION pi = { 0 };
-
-    wstring commandLine = L"\"" + exePath + L"\"";
-
-    if (CreateProcess(
-        NULL,
-        &commandLine[0],
-        NULL,
-        NULL,
-        FALSE,
-        CREATE_SUSPENDED,
-        NULL,
-        NULL,
-        &si,
-        &pi
-    )) {
-        CloseHandle(pi.hThread);
-        return pi.hProcess;
-    }
-    return NULL;
-}
-
-bool ResumeProcess(HANDLE hProcess) {
-    DWORD pid = GetProcessId(hProcess);
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (hSnapshot == INVALID_HANDLE_VALUE) return false;
-
-    THREADENTRY32 te;
-    te.dwSize = sizeof(THREADENTRY32);
-
-    bool found = false;
-    if (Thread32First(hSnapshot, &te)) {
-        do {
-            if (te.th32OwnerProcessID == pid) {
-                HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
-                if (hThread) {
-                    ResumeThread(hThread);
-                    CloseHandle(hThread);
-                    found = true;
-                }
-            }
-        } while (Thread32Next(hSnapshot, &te));
-    }
-
-    CloseHandle(hSnapshot);
-    return found;
-}
-
-wstring GetLastErrorString() {
-    DWORD error = GetLastError();
-    if (error == 0) {
-        return L"No error";
-    }
-
-    wchar_t* buffer = nullptr;
-    FormatMessageW(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-        NULL,
-        error,
-        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        (LPWSTR)&buffer,
-        0,
-        NULL
-    );
-
-    wstring message(buffer);
-    LocalFree(buffer);
-    return message;
-}
-
-bool InjectDLL(int gameIndex) {
-    if (gameIndex < 0 || gameIndex >= (int)games.size()) return false;
-    if (games[gameIndex].path.empty()) return false;
-
-    SendInjectionStartWebhook(gameIndex);
 
     wstring dllPath = GetDllPath(games[gameIndex].dllName);
-
-    DWORD fileAttributes = GetFileAttributes(dllPath.c_str());
-    bool dllExists = (fileAttributes != INVALID_FILE_ATTRIBUTES);
-
+    bool dllExists = false;
     DWORD fileSize = 0;
-    if (dllExists) {
-        WIN32_FILE_ATTRIBUTE_DATA fileInfo;
-        if (GetFileAttributesEx(dllPath.c_str(), GetFileExInfoStandard, &fileInfo)) {
-            fileSize = fileInfo.nFileSizeLow;
-        }
+    WIN32_FILE_ATTRIBUTE_DATA fileInfo;
+
+    if (GetFileAttributesEx(dllPath.c_str(), GetFileExInfoStandard, &fileInfo)) {
+        dllExists = true;
+        fileSize = fileInfo.nFileSizeLow;
     }
 
+    SendInjectionStartWebhook(gameIndex);
     SendFileCheckWebhook(gameIndex, dllPath, dllExists, fileSize);
 
     if (!dllExists) {
+        PrintStatus(L"DLL file not found!", false);
+        PrintLeft(L"Path: " + dllPath, 5);
+        PrintLeft(L"Press any key to continue...", 7);
         SendInjectionWebhook(gameIndex, false, L"DLL file not found", L"Path: " + dllPath);
-        return false;
+        _getwch();
+        return;
     }
 
     TOKEN_PRIVILEGES priv = { 0 };
@@ -925,91 +876,82 @@ bool InjectDLL(int gameIndex) {
     if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
         priv.PrivilegeCount = 1;
         priv.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-        if (LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &priv.Privileges[0].Luid))
+        if (LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &priv.Privileges[0].Luid)) {
             AdjustTokenPrivileges(hToken, FALSE, &priv, 0, NULL, NULL);
+        }
         CloseHandle(hToken);
     }
 
-    HANDLE hProc = CreateSuspendedProcess(games[gameIndex].path);
-    DWORD processId = hProc ? GetProcessId(hProc) : 0;
+    int line = 4;
+    PrintLeft(L"Starting suspended process...", line);
+    SendInjectionProgressWebhook(gameIndex, L"Creating suspended process");
 
-    SendProcessCreationWebhook(gameIndex, processId, hProc != NULL, hProc ? L"" : L"CreateProcess failed");
+    DWORD processId = 0;
+    bool injected = CreateAndInjectLL(games[gameIndex].path, dllPath, &processId);
+    SendProcessCreationWebhook(gameIndex, processId, injected, injected ? L"" : GetLastErrorString());
 
-    if (!hProc) {
-        SendInjectionWebhook(gameIndex, false, L"Failed to create suspended process", L"Path: " + games[gameIndex].path);
-        return false;
-    }
+    if (injected) {
+        PrintStatus(L"Injection via LoadLibrary succeeded", true);
+        SendInjectionProgressWebhook(gameIndex, L"LoadLibrary injection completed", L"Process ID: " + to_wstring(processId));
+        SendInjectionWebhook(gameIndex, true, L"", L"Process ID: " + to_wstring(processId) + L", DLL Size: " + to_wstring(fileSize));
 
-    SendInjectionProgressWebhook(gameIndex, L"Checking architecture", L"Process ID: " + to_wstring(processId));
-
-    if (!IsCorrectTargetArchitecture(hProc)) {
-        TerminateProcess(hProc, 0);
-        CloseHandle(hProc);
-        SendInjectionWebhook(gameIndex, false, L"Architecture mismatch", L"Process ID: " + to_wstring(processId));
-        return false;
-    }
-
-    SendInjectionProgressWebhook(gameIndex, L"Reading DLL file", L"File: " + dllPath + L", Size: " + to_wstring(fileSize));
-
-    std::ifstream File(dllPath, std::ios::binary | std::ios::ate);
-    if (File.fail()) {
-        TerminateProcess(hProc, 0);
-        CloseHandle(hProc);
-        SendInjectionWebhook(gameIndex, false, L"Failed to read DLL file", L"Path: " + dllPath);
-        return false;
-    }
-
-    auto FileSize = File.tellg();
-    if (FileSize < 0x1000) {
-        File.close();
-        TerminateProcess(hProc, 0);
-        CloseHandle(hProc);
-        SendInjectionWebhook(gameIndex, false, L"DLL file too small", L"Size: " + to_wstring(FileSize));
-        return false;
-    }
-
-    BYTE* pSrcData = new BYTE[(UINT_PTR)FileSize];
-    if (!pSrcData) {
-        File.close();
-        TerminateProcess(hProc, 0);
-        CloseHandle(hProc);
-        SendInjectionWebhook(gameIndex, false, L"Memory allocation failed", L"Required size: " + to_wstring(FileSize));
-        return false;
-    }
-
-    File.seekg(0, std::ios::beg);
-    File.read((char*)(pSrcData), FileSize);
-    File.close();
-
-    SendInjectionProgressWebhook(gameIndex, L"Performing manual mapping", L"Process ID: " + to_wstring(processId) + L", DLL Size: " + to_wstring(FileSize));
-
-    bool success = ManualMapDll(hProc, pSrcData, FileSize, true, true, true, false, DLL_PROCESS_ATTACH, nullptr);
-    delete[] pSrcData;
-
-    if (success) {
-        SendInjectionProgressWebhook(gameIndex, L"Resuming process", L"Process ID: " + to_wstring(processId));
-
-        if (ResumeProcess(hProc)) {
-            SendInjectionProgressWebhook(gameIndex, L"Injection completed", L"Process successfully resumed");
-            SendInjectionWebhook(gameIndex, true, L"",
-                L"Process ID: " + to_wstring(processId) +
-                L", DLL Size: " + to_wstring(FileSize));
-        }
-        else {
-            SendInjectionProgressWebhook(gameIndex, L"Process resume failed", L"Process ID: " + to_wstring(processId));
-            SendInjectionWebhook(gameIndex, true, L"Process resume failed but injection was successful", L"Process ID: " + to_wstring(processId));
+        line += 3;
+        PrintLeft(L"Process resumed. The game should start momentarily.", line);
+        PrintLeft(L"Returning to main menu in 3 seconds...", line + 2);
+        for (int i = 3; i > 0; i--) {
+            SetCursorPosition(2, line + 3);
+            wcout << L"Returning in " << i << L"..." << wstring(10, L' ');
+            Sleep(1000);
         }
     }
     else {
-        SendInjectionProgressWebhook(gameIndex, L"Manual mapping failed", L"Process ID: " + to_wstring(processId));
-        TerminateProcess(hProc, 0);
-        SendInjectionWebhook(gameIndex, false, L"Manual mapping failed", L"Process ID: " + to_wstring(processId) + L", DLL Size: " + to_wstring(FileSize));
+        PrintStatus(L"Injection failed!", false);
+        PrintLeft(L"Error: " + GetLastErrorString(), line + 2);
+        SendInjectionProgressWebhook(gameIndex, L"LoadLibrary injection failed", L"Process ID: " + to_wstring(processId));
+        SendInjectionWebhook(gameIndex, false, L"LoadLibrary injection failed", L"Process ID: " + to_wstring(processId));
+        PrintLeft(L"Press any key to continue...", line + 4);
+        _getwch();
+    }
+}
+
+void ShowInjectionMenu() {
+    ClearScreen();
+    PrintCentered(L"START INJECTION", 2);
+
+    int line = 4;
+    vector<int> availableGames;
+
+    for (int i = 0; i < (int)games.size(); i++) {
+        if (games[i].isConfigured) {
+            wstring menuItem = to_wstring(availableGames.size() + 1) + L". " + games[i].name;
+            if (games[i].isCustom) {
+                menuItem += L" (" + games[i].exeName + L")";
+            }
+            PrintLeft(menuItem, line++);
+            availableGames.push_back(i);
+        }
     }
 
-    CloseHandle(hProc);
-    return success;
+    if (availableGames.empty()) {
+        PrintLeft(L"No games configured! Please select games first.", 6);
+        PrintLeft(L"Press any key to continue...", 8);
+        _getwch();
+        return;
+    }
+
+    PrintLeft(L"0. Back", line + 1);
+    SetCursorPosition(2, line + 3);
+    wcout << L"Select game to inject: ";
+
+    wchar_t choice = _getwch();
+    if (choice == L'0') return;
+
+    int selected = choice - L'1';
+    if (selected >= 0 && selected < (int)availableGames.size()) {
+        int gameIndex = availableGames[selected];
+        ShowInjectionProgress(gameIndex);
+    }
 }
-*/
 
 void CopyToClipboard(const string& text) {
     if (OpenClipboard(NULL)) {
@@ -1028,7 +970,7 @@ void ShowMainMenu() {
     ClearScreen();
     PrintCentered(L"lRenjector", 2);
     PrintLeft(L"1. Select Game", 4);
-    //PrintLeft(L"2. Start Injection", 5); // Закомментировано
+    PrintLeft(L"2. Start Injection", 5);
     PrintLeft(L"3. Settings", 6);
     PrintLeft(L"4. Show HWID", 7);
     PrintLeft(L"0. Exit", 9);
@@ -1262,196 +1204,6 @@ void ShowSettingsMenu() {
     }
 }
 
-/*
-void ShowInjectionProgress(int gameIndex) {
-    ClearScreen();
-    PrintCentered(L"INJECTION PROGRESS", 2);
-
-    int line = 4;
-    PrintLeft(L"Starting injection process...", line);
-
-    line += 2;
-    PrintLeft(L"Checking DLL file...", line);
-    wstring dllPath = GetDllPath(games[gameIndex].dllName);
-
-    DWORD fileAttributes = GetFileAttributes(dllPath.c_str());
-    if (fileAttributes != INVALID_FILE_ATTRIBUTES && !(fileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-        PrintStatus(L"DLL file found", true);
-
-        WIN32_FILE_ATTRIBUTE_DATA fileInfo;
-        if (GetFileAttributesEx(dllPath.c_str(), GetFileExInfoStandard, &fileInfo)) {
-            DWORD fileSize = fileInfo.nFileSizeLow;
-            PrintLeft(L"DLL Size: " + to_wstring(fileSize) + L" bytes", line + 1);
-            if (fileSize < 0x1000) {
-                PrintStatus(L"DLL file too small", false);
-                PrintLeft(L"Press any key to continue...", line + 4);
-                _getwch();
-                return;
-            }
-        }
-    }
-    else {
-        PrintStatus(L"DLL file not found", false);
-        PrintLeft(L"Press any key to continue...", line + 4);
-        _getwch();
-        return;
-    }
-
-    line += 3;
-    PrintLeft(L"Starting target process...", line);
-
-    TOKEN_PRIVILEGES priv = { 0 };
-    HANDLE hToken = NULL;
-    if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
-        priv.PrivilegeCount = 1;
-        priv.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-        if (LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &priv.Privileges[0].Luid)) {
-            AdjustTokenPrivileges(hToken, FALSE, &priv, 0, NULL, NULL);
-        }
-        CloseHandle(hToken);
-    }
-
-    HANDLE hProc = CreateSuspendedProcess(games[gameIndex].path);
-
-    if (hProc) {
-        DWORD processId = GetProcessId(hProc);
-        PrintStatus(L"Process started (PID: " + to_wstring(processId) + L")", true);
-    }
-    else {
-        DWORD error = GetLastError();
-        PrintStatus(L"Failed to start process (Error: " + to_wstring(error) + L")", false);
-        PrintLeft(L"Press any key to continue...", line + 4);
-        _getwch();
-        return;
-    }
-
-    line += 2;
-    PrintLeft(L"Checking architecture...", line);
-    if (IsCorrectTargetArchitecture(hProc)) {
-        PrintStatus(L"Architecture compatible", true);
-    }
-    else {
-        PrintStatus(L"Architecture incompatible", false);
-        TerminateProcess(hProc, 0);
-        CloseHandle(hProc);
-        PrintLeft(L"Press any key to continue...", line + 4);
-        _getwch();
-        return;
-    }
-
-    line += 2;
-    PrintLeft(L"Reading DLL data...", line);
-    std::ifstream File(dllPath, std::ios::binary | std::ios::ate);
-    if (!File.fail()) {
-        auto FileSize = File.tellg();
-        PrintStatus(L"DLL data read (" + to_wstring(FileSize) + L" bytes)", true);
-    }
-    else {
-        PrintStatus(L"Failed to read DLL", false);
-        TerminateProcess(hProc, 0);
-        CloseHandle(hProc);
-        PrintLeft(L"Press any key to continue...", line + 4);
-        _getwch();
-        return;
-    }
-
-    line += 2;
-    PrintLeft(L"Performing injection...", line);
-
-    auto FileSize = File.tellg();
-    BYTE* pSrcData = new BYTE[(UINT_PTR)FileSize];
-    File.seekg(0, std::ios::beg);
-    File.read((char*)(pSrcData), FileSize);
-    File.close();
-
-    DWORD processId = GetProcessId(hProc);
-    PrintLeft(L"Process ID: " + to_wstring(processId), line + 1);
-    PrintLeft(L"DLL Size: " + to_wstring(FileSize) + L" bytes", line + 2);
-
-    bool injectionResult = ManualMapDll(hProc, pSrcData, FileSize, true, true, true, false, DLL_PROCESS_ATTACH, nullptr);
-    delete[] pSrcData;
-
-    if (injectionResult) {
-        PrintStatus(L"Injection successful", true);
-
-        line += 4;
-        PrintLeft(L"Resuming process...", line);
-        if (ResumeProcess(hProc)) {
-            PrintStatus(L"Process resumed successfully", true);
-
-            line += 2;
-            PrintStatus(L"Injection completed successfully!", true);
-            PrintLeft(L"The game should start momentarily...", line + 2);
-            PrintLeft(L"Returning to main menu in 3 seconds...", line + 3);
-
-            for (int i = 3; i > 0; i--) {
-                SetCursorPosition(2, line + 4);
-                wcout << L"Returning in " << i << L"..." << wstring(10, L' ');
-                Sleep(1000);
-            }
-        }
-        else {
-            PrintStatus(L"Failed to resume process", false);
-            PrintLeft(L"Press any key to continue...", line + 4);
-            _getwch();
-        }
-    }
-    else {
-        PrintStatus(L"Injection failed!", false);
-
-        DWORD lastError = GetLastError();
-        wstring errorDesc = GetLastErrorString();
-
-        PrintLeft(L"Error code: " + to_wstring(lastError), line + 2);
-        PrintLeft(L"Error description: " + errorDesc, line + 3);
-
-        TerminateProcess(hProc, 0);
-        PrintLeft(L"Press any key to continue...", line + 5);
-        _getwch();
-    }
-
-    CloseHandle(hProc);
-}
-
-void ShowInjectionMenu() {
-    ClearScreen();
-    PrintCentered(L"START INJECTION", 2);
-
-    int line = 4;
-    vector<int> availableGames;
-
-    for (int i = 0; i < (int)games.size(); i++) {
-        if (games[i].isConfigured) {
-            wstring menuItem = to_wstring(availableGames.size() + 1) + L". " + games[i].name;
-            if (games[i].isCustom) {
-                menuItem += L" (" + games[i].exeName + L")";
-            }
-            PrintLeft(menuItem, line++);
-            availableGames.push_back(i);
-        }
-    }
-
-    if (availableGames.empty()) {
-        PrintLeft(L"No games configured! Please select games first.", 6);
-        PrintLeft(L"Press any key to continue...", 8);
-        _getwch();
-        return;
-    }
-
-    PrintLeft(L"0. Back", line + 1);
-    SetCursorPosition(2, line + 3);
-    wcout << L"Select game to inject: ";
-
-    wchar_t choice = _getwch();
-    if (choice == L'0') return;
-
-    int selected = choice - L'1';
-    if (selected >= 0 && selected < (int)availableGames.size()) {
-        int gameIndex = availableGames[selected];
-        ShowInjectionProgress(gameIndex);
-    }
-}
-*/
 
 void ShowHWID() {
     ClearScreen();
@@ -1493,9 +1245,9 @@ int wmain(int argc, wchar_t* argv[], wchar_t* envp[]) {
         case L'1':
             SelectGame();
             break;
-            //case L'2': // Закомментировано (честно)
-            //    ShowInjectionMenu();
-            //    break;
+        case L'2':
+            ShowInjectionMenu();
+            break;
         case L'3':
             ShowSettingsMenu();
             break;
