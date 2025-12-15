@@ -1,3 +1,4 @@
+/*It used to be Manual Mapping, but now it’s Load Library. You’d better create your own Manual Mapping.*/
 #include "injector.h"
 #include <windows.h>
 #include <string>
@@ -115,4 +116,5 @@ bool CreateAndInjectLL(const wstring& exePath, const wstring& dllPath, DWORD* ou
     CloseHandle(pi.hProcess);
 
     return result;
+
 }
